@@ -28,6 +28,9 @@
 .rtable td.rankcell{padding:10px 12px}
 .rk{width:26px;height:26px;border-radius:8px;display:inline-grid;place-items:center;background:#eef3f8;font-weight:900;font-size:12px}
 .rk.p1{background:#fff6cf;color:#8e6a00}.rk.p2{background:#eef1f5;color:#66717f}.rk.p3{background:#f8eadf;color:#9a6137}
+.viewtabs{display:flex;gap:6px;padding:14px 18px 2px}
+.vtab{border:1px solid var(--line);background:white;border-radius:10px;padding:8px 14px;font-size:11px;font-weight:800;color:#607187;cursor:pointer}
+.vtab.active{background:var(--blue);color:white;border-color:var(--blue)}
 .msg{padding:22px;color:#8090a3;font-size:12px}
 .rerr{padding:22px;color:#c0392b;font-size:12px}
 </style>
@@ -40,7 +43,7 @@
 <div class="grid">
 <section class="card main"><div class="card-head"><div class="kicker">Vista de resultados</div><h2 id="eventTitle">Prueba 9 · Campeonato Ciudad de Arequipa</h2><div class="sub" id="eventSub">Calificativa individual + prueba por equipos</div></div>
 <div class="current"><div class="current-top"><div><div class="bigheight" id="heightLabel">1.20 m</div><div class="sub">Tabla A · Doble recorrido</div></div><div class="livebadge" id="liveBadge">EN VIVO</div></div><div class="meta-row" id="metaRow"></div></div>
-<div class="rwrap"><div id="results"><div class="msg">Cargando resultados…</div></div></div></section>
+<div class="viewtabs" id="viewTabs"></div><div class="rwrap"><div id="results"><div class="msg">Cargando resultados…</div></div></div></section>
 <aside class="card side"><div class="side-title" id="sideDay">Sábado 29 · Pruebas</div><div class="tests" id="tests"></div><div class="info"><h3>Información oficial</h3><p>Resultados en vivo desde la hoja de Google Sheets del comité. La web se actualiza sola cada 15 segundos.</p><div class="linkrow"><a class="btn primary" id="sheetLink" href="#" target="_blank" rel="noopener">Ver hoja</a><a class="btn" id="pruebaLink" href="#" target="_blank" rel="noopener">Esta prueba</a></div></div></aside>
 </div>
 <div class="footer-note"><span id="footerNote">Actualización automática cada 15 segundos desde Google Sheets.</span><span class="demo" id="updatedAt"></span></div>
@@ -162,23 +165,35 @@ function toModel(gid,matrix){
  return {gid,columns,idx,meta,comp};
 }
 
-/* ---- Orden: menos faltas y, a igualdad, menor tiempo. Sin resultado -> al final por orden de salida ---- */
+/* ---- Orden de resultados:
+   1) Si hay columna PUESTO, el PUESTO oficial manda como primera condición.
+   2) Si no hay puesto (o filas sin puesto): menos faltas y, a igualdad, menor tiempo.
+   3) Sin resultado -> al final, por orden de salida. ---- */
 function sortComp(m){
- const hasF=m.idx.faltas!=null, hasT=m.idx.tiempo!=null;
+ const hasF=m.idx.faltas!=null, hasT=m.idx.tiempo!=null, hasP=m.idx.puesto!=null;
  const arr=m.comp.slice();
  arr.forEach(c=>{
    c._f=hasF?numF(c.vals[m.idx.faltas]):null;
    c._t=hasT?numF(c.vals[m.idx.tiempo]):null;
-   c._cls=hasF?(c._f!=null):(hasT?(c._t!=null):false);
+   c._p=hasP?numF(c.vals[m.idx.puesto]):null;
+   c._cls=(c._p!=null)||(hasF?(c._f!=null):(hasT?(c._t!=null):false));
  });
  const byOrden=(a,b)=>((numF(a.orden)==null?1e9:numF(a.orden))-(numF(b.orden)==null?1e9:numF(b.orden)));
- if(!hasF&&!hasT) return arr.sort(byOrden);         // ambientación/orden de salida
+ if(!hasF&&!hasT&&!hasP) return arr.sort(byOrden);   // ambientación/orden de salida
  return arr.sort((a,b)=>{
-   if(a._cls&&!b._cls)return -1; if(b._cls&&!a._cls)return 1;
-   if(a._cls&&b._cls){
+   // 1) PUESTO oficial manda
+   if(hasP){
+     if(a._p!=null&&b._p!=null){ if(a._p!==b._p)return a._p-b._p; }
+     else if(a._p!=null)return -1;
+     else if(b._p!=null)return 1;
+   }
+   // 2) clasificados (con resultado) antes que sin resultado
+   const aOk=hasF?a._f!=null:(hasT?a._t!=null:false);
+   const bOk=hasF?b._f!=null:(hasT?b._t!=null:false);
+   if(aOk&&!bOk)return -1; if(bOk&&!aOk)return 1;
+   if(aOk&&bOk){
      if(hasF&&a._f!==b._f) return a._f-b._f;
      if(a._t!=null&&b._t!=null&&a._t!==b._t) return a._t-b._t;
-     return byOrden(a,b);
    }
    return byOrden(a,b);
  });
@@ -186,7 +201,7 @@ function sortComp(m){
 
 /* ------------------------------ Estado ------------------------------ */
 const MODELS={};
-let ORDER=[], DAYS=[], curDay=0, curGid=null, lastOk=0;
+let ORDER=[], DAYS=[], curDay=0, curGid=null, lastOk=0, curView='resultados';
 
 async function loadAll(){
  let tabs;
@@ -269,20 +284,38 @@ function renderMain(){
  $('metaRow').innerHTML=boxes.map(x=>`<div class="meta"><b>${esc(x.b)}</b><span>${esc(x.s)}</span></div>`).join('');
  $('pruebaLink').href=sheetUrl(m.gid);
  const hasRes=m.idx.faltas!=null||m.idx.tiempo!=null;
- $('liveBadge').textContent=hasRes?'EN VIVO':'ORDEN DE SALIDA';
- const rows=sortComp(m);
- if(!rows.length){$('results').innerHTML='<div class="msg">Sin binomios cargados en la hoja todavía.</div>';return;}
- const thead='<tr>'+(hasRes?'<th>Pos.</th>':'')+m.columns.map(c=>`<th>${esc(c.label)}</th>`).join('')+'</tr>';
+ renderViewTabs();
+ if(!m.comp.length){$('liveBadge').textContent=hasRes?'EN VIVO':'ORDEN DE SALIDA';$('results').innerHTML='<div class="msg">Sin binomios cargados en la hoja todavía.</div>';return;}
+ if(curView==='orden'){
+   $('liveBadge').textContent='ORDEN DE SALIDA';
+   const cols=m.columns.filter(c=>c.i!==m.idx.faltas && c.i!==m.idx.tiempo && c.i!==m.idx.puesto);
+   const rows=m.comp.slice().sort((a,b)=>ordv(a)-ordv(b));
+   $('results').innerHTML=tableHTML(cols,rows,false);
+ } else {
+   $('liveBadge').textContent=hasRes?'EN VIVO':'ORDEN DE SALIDA';
+   $('results').innerHTML=tableHTML(m.columns,sortComp(m),hasRes);
+ }
+}
+const ordv=c=>{const n=numF(c.orden);return n==null?1e9:n;};
+function tableHTML(cols,rows,showRank){
+ const thead='<tr>'+(showRank?'<th>Pos.</th>':'')+cols.map(c=>`<th>${esc(c.label)}</th>`).join('')+'</tr>';
  const tbody=rows.map((c,i)=>{
    let rank='';
-   if(hasRes){
-     if(c._cls){const p=(i===0?'p1':i===1?'p2':i===2?'p3':''); rank=`<td class="rankcell"><span class="rk ${p}">${i+1}</span></td>`;}
-     else rank='<td class="rankcell"><span class="rk">—</span></td>';
+   if(showRank){
+     const label=(c._p!=null)?String(c._p):(c._cls?String(i+1):'—');
+     const p=(label==='1'?'p1':label==='2'?'p2':label==='3'?'p3':'');
+     rank=`<td class="rankcell"><span class="rk ${p}">${esc(label)}</span></td>`;
    }
-   const tds=m.columns.map(col=>`<td>${esc(c.vals[col.i]||'')}</td>`).join('');
+   const tds=cols.map(col=>`<td>${esc(c.vals[col.i]||'')}</td>`).join('');
    return `<tr>${rank}${tds}</tr>`;
  }).join('');
- $('results').innerHTML=`<table class="rtable"><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
+ return `<table class="rtable"><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
+}
+function renderViewTabs(){
+ const el=$('viewTabs'); if(!el)return;
+ el.innerHTML=[['resultados','Resultados'],['orden','Orden de salida']]
+   .map(([k,l])=>`<button class="vtab ${curView===k?'active':''}" data-v="${k}">${l}</button>`).join('');
+ el.querySelectorAll('.vtab').forEach(b=>b.onclick=()=>{curView=b.dataset.v;renderMain();});
 }
 
 /* ------------------------------ Ciclo ------------------------------ */
