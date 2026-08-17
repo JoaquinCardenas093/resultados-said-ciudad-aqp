@@ -252,15 +252,20 @@ function renderMain(){
  $('heightLabel').textContent=m.meta.height||'—';
  const sub=document.querySelector('.current .sub'); if(sub)sub.textContent=m.meta.tabla||m.meta.name||'';
  // Cajas de metadata: dinámicas desde la tabla Nombre/Valor de la hoja.
+ // Fila especial "Inscritos": si Valor es true/TRUE/1/sí -> muestra el conteo; si no, no aparece.
+ const TRUTHY=v=>['TRUE','1','SI','SÍ','X','YES','VERDADERO','V'].indexOf(up(v))>=0;
  const boxes=[];
  if(m.meta.pairs && m.meta.pairs.length){
-   m.meta.pairs.forEach(p=>boxes.push({b:p.v||'—', s:p.n}));
+   m.meta.pairs.forEach(p=>{
+     const key=up(p.n);
+     if(key==='INSCRITOS'||key==='INSCRIPTOS'){ if(TRUTHY(p.v))boxes.push({b:m.comp.length+' binomios', s:'Inscritos'}); return; }
+     boxes.push({b:p.v||'—', s:p.n});
+   });
  } else { // fallback: lo que se pueda sacar del título
    if(m.meta.tabla)boxes.push({b:m.meta.tabla, s:'Reglamento'});
    if(m.meta.speed)boxes.push({b:m.meta.speed, s:'Velocidad'});
    if(m.meta.tiempoOptimo)boxes.push({b:m.meta.tiempoOptimo, s:'Tiempo óptimo'});
  }
- boxes.push({b:m.comp.length+' binomios', s:'Inscritos'});
  $('metaRow').innerHTML=boxes.map(x=>`<div class="meta"><b>${esc(x.b)}</b><span>${esc(x.s)}</span></div>`).join('');
  $('pruebaLink').href=sheetUrl(m.gid);
  const hasRes=m.idx.faltas!=null||m.idx.tiempo!=null;
