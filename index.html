@@ -31,6 +31,7 @@
 .viewtabs{display:flex;gap:6px;padding:14px 18px 2px}
 .vtab{border:1px solid var(--line);background:white;border-radius:10px;padding:8px 14px;font-size:11px;font-weight:800;color:#607187;cursor:pointer}
 .vtab.active{background:var(--blue);color:white;border-color:var(--blue)}
+.linkrow button.btn{cursor:pointer;font-family:inherit}
 .msg{padding:22px;color:#8090a3;font-size:12px}
 .rerr{padding:22px;color:#c0392b;font-size:12px}
 </style>
@@ -44,7 +45,7 @@
 <section class="card main"><div class="card-head"><div class="kicker">Vista de resultados</div><h2 id="eventTitle">Prueba 9 · Campeonato Ciudad de Arequipa</h2><div class="sub" id="eventSub">Calificativa individual + prueba por equipos</div></div>
 <div class="current"><div class="current-top"><div><div class="bigheight" id="heightLabel">1.20 m</div><div class="sub">Tabla A · Doble recorrido</div></div><div class="livebadge" id="liveBadge">EN VIVO</div></div><div class="meta-row" id="metaRow"></div></div>
 <div class="viewtabs" id="viewTabs"></div><div class="rwrap"><div id="results"><div class="msg">Cargando resultados…</div></div></div></section>
-<aside class="card side"><div class="side-title" id="sideDay">Sábado 29 · Pruebas</div><div class="tests" id="tests"></div><div class="info"><div class="linkrow"><a class="btn primary" id="sheetLink" href="#" target="_blank" rel="noopener">Ver hoja</a><a class="btn" id="pruebaLink" href="#" target="_blank" rel="noopener">Esta prueba</a></div></div></aside>
+<aside class="card side"><div class="side-title" id="sideDay">Sábado 29 · Pruebas</div><div class="tests" id="tests"></div><div class="info"><div class="linkrow"><button class="btn primary" id="btnPruebas">Pruebas</button><button class="btn" id="btnCamp">Campeonato</button></div></div></aside>
 </div>
 <div class="footer-note"><span></span><span class="demo" id="updatedAt"></span></div>
 </main>
@@ -216,7 +217,7 @@ function sortComp(m){
 
 /* ------------------------------ Estado ------------------------------ */
 const MODELS={};
-let ORDER=[], DAYS=[], curDay=0, curGid=null, lastOk=0, curView='resultados';
+let ORDER=[], CAMPS=[], DAYS=[], curDay=0, curGid=null, curCamp=null, lastOk=0, curView='resultados', curMode='pruebas';
 
 async function loadAll(){
  let tabs;
@@ -224,7 +225,7 @@ async function loadAll(){
  catch(e){ console.error('discover',e); return {ok:0,fatal:true}; }
  if(!tabs||!tabs.length) return {ok:0,fatal:true};
  const rs=await mapPool(tabs,4,t=>loadGid(t.gid));
- let ok=0; const order=[];
+ let ok=0; const order=[], camps=[];
  tabs.forEach((t,i)=>{
    const r=rs[i];
    if(r.status!=='fulfilled'){ console.warn('load',t.gid,r.reason&&r.reason.message); return; }
@@ -232,11 +233,17 @@ async function loadAll(){
      const model=toModel(t.gid,r.value);
      model.meta.tabName=t.name;
      if(!model.meta.name || model.meta.name.length<2) model.meta.name=t.name;
-     // Solo hojas de prueba: llevan "Fecha:" o "Prueba N°" en su título
-     if(model.meta.date || model.meta.num){ MODELS[t.gid]=model; order.push(t.gid); ok++; }
+     if(/^\s*resultado\s+campeonato/i.test(t.name)){
+       // Hoja de campeonato (posiciones acumuladas)
+       model.meta.campName=t.name.replace(/^\s*resultado\s+campeonato\s*/i,'').trim()||t.name;
+       MODELS[t.gid]=model; camps.push(t.gid); ok++;
+     } else if(model.meta.date || model.meta.num){
+       // Hoja de prueba: lleva "Fecha:" o "Prueba N°"
+       MODELS[t.gid]=model; order.push(t.gid); ok++;
+     }
    }catch(e){ console.error('parse',t.gid,e); }
  });
- ORDER=order;
+ ORDER=order; CAMPS=camps;
  // Agrupar por fecha (en el orden real de las pestañas)
  const map=new Map();
  ORDER.forEach(gid=>{const m=MODELS[gid]; const d=m.meta.date||'Programa';
@@ -251,7 +258,6 @@ function renderHero(){
  $('heroTitle').textContent='Ciudad de Arequipa'+(year?(' '+year):'');
  const ds=DAYS.map(d=>d.date).filter(d=>d&&d!=='Sin fecha');
  $('heroDates').textContent=(ds.length?ds.join(' · '):'Programa')+' · Resultados y clasificación en vivo.';
- $('sheetLink').href=sheetUrl();
 }
 function renderDayTabs(){
  const el=$('days');
@@ -297,7 +303,6 @@ function renderMain(){
    if(m.meta.tiempoOptimo)boxes.push({b:m.meta.tiempoOptimo, s:'Tiempo óptimo'});
  }
  $('metaRow').innerHTML=boxes.map(x=>`<div class="meta"><b>${esc(x.b)}</b><span>${esc(x.s)}</span></div>`).join('');
- $('pruebaLink').href=sheetUrl(m.gid);
  // ¿Hay resultados de verdad? (columna de resultado + al menos un valor numérico)
  const hasRes=hasResults(m);
  const view=hasRes?curView:'orden';   // sin resultados -> solo "Orden de salida"
@@ -345,6 +350,55 @@ function renderViewTabs(hasRes){
 }
 
 /* ------------------------------ Ciclo ------------------------------ */
+/* ------------------------------ Modo (Pruebas / Campeonato) ------------------------------ */
+function renderAll(){
+ renderHero();
+ renderModeButtons();
+ if(curMode==='campeonato'){
+   $('days').style.display='none';
+   $('viewTabs').style.display='none';
+   renderCampSide();
+   renderCampMain();
+ } else {
+   $('viewTabs').style.display='';
+   renderDayTabs();
+   renderSide();
+   renderMain();
+ }
+}
+function renderModeButtons(){
+ const bp=$('btnPruebas'), bc=$('btnCamp'); if(!bp||!bc)return;
+ bp.className='btn'+(curMode==='pruebas'?' primary':'');
+ bc.className='btn'+(curMode==='campeonato'?' primary':'');
+ bp.onclick=()=>{curMode='pruebas';renderAll();};
+ bc.onclick=()=>{curMode='campeonato'; if(CAMPS.indexOf(curCamp)<0)curCamp=CAMPS[0]||null; renderAll();};
+}
+function renderCampSide(){
+ $('sideDay').textContent='Campeonato';
+ if(!CAMPS.length){ $('tests').innerHTML='<div class="msg" style="padding:12px 14px">Sin hojas de campeonato.</div>'; return; }
+ $('tests').innerHTML=CAMPS.map(gid=>{const m=MODELS[gid]; const sel=gid===curCamp;
+   return `<button class="test ${sel?'active':''}" data-gid="${gid}"><div class="test-num">🏆</div><div class="test-name"><b>${esc(m.meta.campName||m.meta.name)}</b>${sel?'<div class="status">● SELECCIONADA</div>':''}</div></button>`;
+ }).join('');
+ $('tests').querySelectorAll('.test').forEach(b=>b.onclick=()=>{curCamp=b.dataset.gid;renderCampSide();renderCampMain();});
+}
+function renderCampMain(){
+ const m=CAMPS.length?MODELS[curCamp]:null;
+ if(!m){
+   $('eventTitle').textContent='Campeonato'; $('eventSub').textContent=''; $('metaRow').innerHTML='';
+   $('heightLabel').textContent='—'; $('liveBadge').textContent='CAMPEONATO';
+   $('results').innerHTML='<div class="msg">No hay hojas llamadas «Resultado Campeonato ...».</div>'; return;
+ }
+ $('eventTitle').textContent='Campeonato '+(m.meta.campName||'');
+ $('eventSub').textContent='Posiciones acumuladas';
+ const hh=(m.meta.campName||'').match(/(\d+[.,]\d+)/);
+ $('heightLabel').textContent=hh?(hh[1].replace(',','.')+' m'):(m.meta.height||'—');
+ const sub=document.querySelector('.current .sub'); if(sub)sub.textContent='Posiciones acumuladas';
+ $('metaRow').innerHTML='<div class="meta"><b>'+m.comp.length+' binomios</b><span>Clasificados</span></div>';
+ $('liveBadge').textContent='CAMPEONATO';
+ if(!m.comp.length){ $('results').innerHTML='<div class="msg">Sin datos en la hoja de campeonato.</div>'; return; }
+ const cols=m.columns.filter(c=>c.i!==m.idx.puesto);
+ $('results').innerHTML=tableHTML(cols,sortComp(m),true);
+}
 function stamp(ok){
  const el=$('updatedAt'); if(!el)return;
  const d=new Date(), p=n=>String(n).padStart(2,'0');
@@ -356,13 +410,15 @@ async function cycle(first){
  if(ok>0)lastOk=Date.now();
  if(first){
    if(DAYS.length){curDay=0;curGid=DAYS[0].gids[0];}
+   if(CAMPS.length){curCamp=CAMPS[0];}
  } else {
    if(!DAYS[curDay]) curDay=0;
    const g=DAYS[curDay]?DAYS[curDay].gids:[];
    if(g.indexOf(curGid)<0 && g.length) curGid=g[0];
+   if(CAMPS.indexOf(curCamp)<0) curCamp=CAMPS[0]||null;
  }
- if(!DAYS.length){$('results').innerHTML='<div class="rerr">No se pudo leer la hoja. Verifica que esté compartida como "Cualquiera con el enlace · Lector".</div>';stamp(false);return;}
- renderHero();renderDayTabs();renderSide();renderMain();stamp(ok>0);
+ if(!DAYS.length && !CAMPS.length){$('results').innerHTML='<div class="rerr">No se pudo leer la hoja. Verifica que esté compartida como "Cualquiera con el enlace · Lector".</div>';stamp(false);return;}
+ renderAll();stamp(ok>0);
 }
 cycle(true);
 setInterval(()=>cycle(false),REFRESH_MS);
