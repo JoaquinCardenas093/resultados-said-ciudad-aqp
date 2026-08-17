@@ -69,7 +69,9 @@ const sheetUrl=gid=>`https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit${gi
 
 /* ---- Carga de una pestaña como CSV (sin backend; gviz manda CORS *) ---- */
 function loadGid(gid){
- const url='https://docs.google.com/spreadsheets/d/'+SHEET_ID+'/gviz/tq?tqx=out:csv&gid='+encodeURIComponent(gid);
+ // export?format=csv devuelve el grid crudo (sin inferencia de tipo de gviz),
+ // así se respetan valores mixtos (texto/número/booleano) en la tabla Nombre/Valor.
+ const url='https://docs.google.com/spreadsheets/d/'+SHEET_ID+'/export?format=csv&gid='+encodeURIComponent(gid);
  const go=()=>fetch(url,{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.text();});
  return go().catch(()=>new Promise(r=>setTimeout(r,700)).then(go)).then(parseCSV);
 }
@@ -131,9 +133,15 @@ function parseTitle(raw){
 
 /* ---- Modelo de una prueba: columnas 100% dinámicas ---- */
 function toModel(gid,matrix){
- const header=matrix[0]||[];
- const meta=parseTitle(header[1]||'');
- // --- Segunda tabla de metadata (Reglamento/Nombre/Valor) a la derecha ---
+ // 1) Fila de encabezados = la que trae JINETE o CABALLO (Fecha/Prueba pueden ir en filas aparte arriba).
+ let hr=-1;
+ for(let r=0;r<matrix.length;r++){const U=matrix[r].map(up); if(U.indexOf('JINETE')>=0||U.indexOf('CABALLO')>=0){hr=r;break;}}
+ if(hr<0)hr=0;
+ const header=matrix[hr]||[];
+ // 2) Título/fecha/altura: todo lo que está desde el inicio hasta la fila de encabezado.
+ const titleText=matrix.slice(0,hr+1).map(row=>row.join(' ')).join(' ');
+ const meta=parseTitle(titleText);
+ // 3) Segunda tabla de metadata (Reglamento/Nombre/Valor) a la derecha.
  let nombreCol=null, valorCol=null, metaStart=Infinity;
  header.forEach((h,i)=>{const H=up(h);
    if(H==='NOMBRE'){nombreCol=i; metaStart=Math.min(metaStart,i);}
@@ -142,25 +150,31 @@ function toModel(gid,matrix){
  });
  meta.pairs=[];
  if(nombreCol!=null && valorCol!=null){
-   for(let r=1;r<matrix.length;r++){const n=norm(matrix[r][nombreCol]); if(!n)continue;
+   for(let r=hr+1;r<matrix.length;r++){const n=norm(matrix[r][nombreCol]); if(!n)continue;
      meta.pairs.push({n, v:norm(matrix[r][valorCol])});}
  }
- // Columna B (índice 1) = N° de orden. Columnas principales: hasta antes de la tabla de metadata.
- const columns=[{i:1,label:'N°'}];
- for(let i=2;i<header.length && i<metaStart;i++){const lbl=norm(header[i]); if(lbl)columns.push({i,label:lbl});}
- // Detectar SOLO para ordenar (por nombre de encabezado)
- const idx={orden:1};
+ // 4) Columna de ORDEN (N°) y columnas principales (antes de la tabla de metadata).
+ let ordenCol=header.findIndex(h=>up(h)==='ORDEN'); if(ordenCol<0)ordenCol=1;
+ const columns=[];
+ for(let i=0;i<header.length && i<metaStart;i++){
+   if(i===ordenCol){columns.push({i,label:'N°'}); continue;}
+   const lbl=norm(header[i]); if(lbl)columns.push({i,label:lbl});
+ }
+ if(!columns.some(c=>c.i===ordenCol))columns.unshift({i:ordenCol,label:'N°'});
+ // 5) Índices para ordenar (por nombre de encabezado).
+ const idx={orden:ordenCol};
  columns.forEach(c=>{const H=up(c.label);
    if(idx.faltas==null && H.indexOf('FALTA')===0) idx.faltas=c.i;
    else if(idx.tiempo==null && H.indexOf('TIEMPO')===0) idx.tiempo=c.i;
    else if(idx.puesto==null && H.indexOf('PUEST')===0) idx.puesto=c.i;
  });
+ // 6) Filas de binomios.
  const comp=[];
- for(let r=1;r<matrix.length;r++){
+ for(let r=hr+1;r<matrix.length;r++){
    const row=matrix[r], vals={}; let hasAny=false;
-   columns.forEach(c=>{const v=norm(row[c.i]); vals[c.i]=v; if(c.i!==1&&v)hasAny=true;});
+   columns.forEach(c=>{const v=norm(row[c.i]); vals[c.i]=v; if(c.i!==ordenCol&&v)hasAny=true;});
    if(!hasAny) continue; // fila vacía (aunque tenga número de orden)
-   comp.push({orden:norm(row[1]),vals});
+   comp.push({orden:norm(row[ordenCol]),vals});
  }
  return {gid,columns,idx,meta,comp};
 }
