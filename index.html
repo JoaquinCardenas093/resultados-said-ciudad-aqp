@@ -164,6 +164,7 @@ function toModel(gid,matrix){
  // 5) Índices para ordenar (por nombre de encabezado).
  const idx={orden:ordenCol};
  columns.forEach(c=>{const H=up(c.label);
+   if(idx.jinete==null && H==='JINETE') idx.jinete=c.i;
    if(idx.faltas==null && H.indexOf('FALTA')===0) idx.faltas=c.i;
    else if(idx.tiempo==null && H.indexOf('TIEMPO')===0) idx.tiempo=c.i;
    else if(idx.puesto==null && H.indexOf('PUEST')===0) idx.puesto=c.i;
@@ -304,7 +305,9 @@ function renderMain(){
  if(!m.comp.length){$('liveBadge').textContent=hasRes?'EN VIVO':'ORDEN DE SALIDA';$('results').innerHTML='<div class="msg">Sin binomios cargados en la hoja todavía.</div>';return;}
  if(view==='orden'){
    $('liveBadge').textContent='ORDEN DE SALIDA';
-   const cols=m.columns.filter(c=>c.i!==m.idx.faltas && c.i!==m.idx.tiempo && c.i!==m.idx.puesto);
+   // Orden de salida: solo columnas hasta JINETE (lo que sigue es resultado).
+   const cut=(m.idx.jinete!=null)?m.idx.jinete:Infinity;
+   const cols=m.columns.filter(c=>c.i<=cut);
    const rows=m.comp.slice().sort((a,b)=>ordv(a)-ordv(b));
    $('results').innerHTML=tableHTML(cols,rows,false);
  } else {
