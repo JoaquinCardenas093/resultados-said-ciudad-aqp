@@ -283,18 +283,24 @@ function renderMain(){
  }
  $('metaRow').innerHTML=boxes.map(x=>`<div class="meta"><b>${esc(x.b)}</b><span>${esc(x.s)}</span></div>`).join('');
  $('pruebaLink').href=sheetUrl(m.gid);
- const hasRes=m.idx.faltas!=null||m.idx.tiempo!=null;
- renderViewTabs();
+ // ¿Hay resultados de verdad? (columna de resultado + al menos un valor numérico)
+ const hasRes=hasResults(m);
+ const view=hasRes?curView:'orden';   // sin resultados -> solo "Orden de salida"
+ renderViewTabs(hasRes);
  if(!m.comp.length){$('liveBadge').textContent=hasRes?'EN VIVO':'ORDEN DE SALIDA';$('results').innerHTML='<div class="msg">Sin binomios cargados en la hoja todavía.</div>';return;}
- if(curView==='orden'){
+ if(view==='orden'){
    $('liveBadge').textContent='ORDEN DE SALIDA';
    const cols=m.columns.filter(c=>c.i!==m.idx.faltas && c.i!==m.idx.tiempo && c.i!==m.idx.puesto);
    const rows=m.comp.slice().sort((a,b)=>ordv(a)-ordv(b));
    $('results').innerHTML=tableHTML(cols,rows,false);
  } else {
-   $('liveBadge').textContent=hasRes?'EN VIVO':'ORDEN DE SALIDA';
-   $('results').innerHTML=tableHTML(m.columns,sortComp(m),hasRes);
+   $('liveBadge').textContent='EN VIVO';
+   $('results').innerHTML=tableHTML(m.columns,sortComp(m),true);
  }
+}
+function hasResults(m){
+ if(m.idx.faltas==null && m.idx.tiempo==null && m.idx.puesto==null) return false;
+ return m.comp.some(c=>numF(c.vals[m.idx.faltas])!=null||numF(c.vals[m.idx.tiempo])!=null||numF(c.vals[m.idx.puesto])!=null);
 }
 const ordv=c=>{const n=numF(c.orden);return n==null?1e9:n;};
 function tableHTML(cols,rows,showRank){
@@ -311,8 +317,10 @@ function tableHTML(cols,rows,showRank){
  }).join('');
  return `<table class="rtable"><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
 }
-function renderViewTabs(){
+function renderViewTabs(hasRes){
  const el=$('viewTabs'); if(!el)return;
+ if(!hasRes){ el.style.display='none'; el.innerHTML=''; return; } // solo Orden -> sin toggle
+ el.style.display='';
  el.innerHTML=[['resultados','Resultados'],['orden','Orden de salida']]
    .map(([k,l])=>`<button class="vtab ${curView===k?'active':''}" data-v="${k}">${l}</button>`).join('');
  el.querySelectorAll('.vtab').forEach(b=>b.onclick=()=>{curView=b.dataset.v;renderMain();});
